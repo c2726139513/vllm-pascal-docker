@@ -48,7 +48,7 @@ WORKDIR /workspace/vllm-pascal
 
 # 安装 Python 构建工具链
 RUN pip install --upgrade pip && \
-    pip install "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf
+    pip install "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf setuptools-scm
 
 # 安装 CUDA 12.4 适配的 PyTorch 2.5.1（与 Pascal 分支测试版本一致）
 RUN pip install --index-url https://download.pytorch.org/whl/cu124 \
