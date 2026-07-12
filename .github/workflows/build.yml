@@ -46,11 +46,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker-container
-          driver-opts: |
-            image=moby/buildkit:latest
-            network=host
 
       - name: Generate image tag(s)
         id: tag
@@ -80,6 +75,6 @@ jobs:
           # 限制并行编译避免 OOM (GitHub runner 为 2 vCPU)
           build-args: |
             MAX_JOBS=2
-          # 缓存加速 — 使用 ACR 作为缓存后端，二次构建大幅提速
-          cache-from: type=registry,ref=${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          # 缓存加速 — inline 模式嵌入镜像，兼容默认 docker driver
+          cache-from: type=registry,ref=${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+          cache-to: type=inline
