@@ -1,0 +1,27 @@
+# Git
+.git
+.gitignore
+.gitattributes
+.github
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+Dockerfile
+
+# Documentation (不需要在构建上下文中)
+*.md
+LICENSE
+
+# Misc
+.env
+*.log
