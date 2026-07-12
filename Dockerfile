@@ -43,22 +43,24 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # 克隆 uaysk/vllm-pascal 仓库
 WORKDIR /workspace
-RUN git clone https://github.com/uaysk/vllm-pascal.git
+RUN git clone --depth 1 https://github.com/uaysk/vllm-pascal.git
 WORKDIR /workspace/vllm-pascal
 
 # 安装 Python 构建工具链
-RUN pip install --upgrade pip && \
-    pip install "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf setuptools-scm numpy
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf setuptools-scm numpy
 
 # 安装 CUDA 12.4 适配的 PyTorch 2.5.1（vLLM 仅需要 torch）
-RUN pip install --index-url https://download.pytorch.org/whl/cu124 \
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 \
         torch==2.5.1
 
-# 从源码编译并安装 vLLM（--no-build-isolation 确保使用已安装的 PyTorch）
-RUN pip install -e . --no-build-isolation
+# 从源码编译并安装 vLLM（非可编辑模式，所有产物进 site-packages）
+RUN pip install . --no-build-isolation
 
-# 清理构建缓存，减小最终构建阶段体积
-RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/*
+# 清理构建中间产物
+RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/* \
+    /workspace/vllm-pascal/.git \
+    /workspace/vllm-pascal/build
 
 # ---------------------------------------------------------------------------
 # 阶段二: 运行阶段 — 仅包含运行时所需的最小依赖
@@ -67,24 +69,22 @@ FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-ENV TORCH_CUDA_ARCH_LIST="6.0 6.1"
 
-# 安装 Python 3.12 运行时（仅所需的最小包）
+# 安装 Python 3.12 运行时（仅 python3.12 本体 + venv，不要 -dev 头文件包）
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update -y && \
     apt-get install -y --no-install-recommends \
-        python3.12 python3.12-venv python3.12-dev && \
+        python3.12 python3.12-venv && \
     rm -rf /var/lib/apt/lists/*
 
-# 从构建阶段复制虚拟环境和源码（保持路径一致，可编辑安装仍有效）
+# 从构建阶段复制虚拟环境（仅 site-packages，不含源码和构建缓存）
 COPY --from=builder /opt/venv /opt/venv
-COPY --from=builder /workspace/vllm-pascal /workspace/vllm-pascal
 
 ENV PATH="/opt/venv/bin:$PATH"
-WORKDIR /workspace/vllm-pascal
+WORKDIR /workspace
 
 # 健康检查（vLLM API 服务就绪探测）
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
