@@ -48,11 +48,11 @@ WORKDIR /workspace/vllm-pascal
 
 # 安装 Python 构建工具链
 RUN pip install --upgrade pip && \
-    pip install "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf setuptools-scm
+    pip install "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf setuptools-scm numpy
 
-# 安装 CUDA 12.4 适配的 PyTorch 2.5.1（与 Pascal 分支测试版本一致）
+# 安装 CUDA 12.4 适配的 PyTorch 2.5.1（vLLM 仅需要 torch）
 RUN pip install --index-url https://download.pytorch.org/whl/cu124 \
-        torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+        torch==2.5.1
 
 # 从源码编译并安装 vLLM（--no-build-isolation 确保使用已安装的 PyTorch）
 RUN pip install -e . --no-build-isolation
