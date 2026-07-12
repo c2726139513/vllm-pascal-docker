@@ -50,9 +50,10 @@ WORKDIR /workspace/vllm-pascal
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf setuptools-scm numpy
 
-# 安装 CUDA 12.4 适配的 PyTorch 2.5.1（vLLM 仅需要 torch）
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 \
-        torch==2.5.1
+# 安装 CUDA 12.1 适配的 PyTorch 2.5.1（vLLM Pascal 分支与此版本兼容）
+# 注意: 用 cu121 wheel, cu124 wheel 缺少 torch::jit::parseSchemaOrName 等内部符号
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
+        torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
 
 # 从源码编译并安装 vLLM（非可编辑模式，所有产物进 site-packages）
 RUN pip install . --no-build-isolation
