@@ -57,6 +57,9 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu12
 # 从源码编译并安装 vLLM（非可编辑模式，所有产物进 site-packages）
 RUN pip install . --no-build-isolation
 
+# 验证 vLLM 编译产物可正确加载（提前暴露链接问题）
+RUN python3 -c "import vllm._C; print('vLLM _C module loaded OK')"
+
 # 清理构建中间产物
 RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/* \
     /workspace/vllm-pascal/.git \
@@ -83,7 +86,10 @@ RUN apt-get update -y && \
 # 从构建阶段复制虚拟环境（仅 site-packages，不含源码和构建缓存）
 COPY --from=builder /opt/venv /opt/venv
 
-ENV PATH="/opt/venv/bin:$PATH"
+# torch/lib 必须加入 LD_LIBRARY_PATH，否则 vLLM 编译的 _C 扩展
+# 在运行时找不到 libtorch.so 中的符号（undefined symbol）
+ENV PATH="/opt/venv/bin:$PATH" \
+    LD_LIBRARY_PATH="/opt/venv/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}"
 WORKDIR /workspace
 
 # 健康检查（vLLM API 服务就绪探测）
