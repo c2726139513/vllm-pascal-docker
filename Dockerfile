@@ -63,9 +63,12 @@ if not so_files:
 PYEOF
 
 # 将源码 vllm/ 目录（含 .so 文件）复制到 site-packages，转为普通安装
-RUN rm -rf /opt/venv/lib/python3.12/site-packages/vllm* && \
-    cp -r /workspace/vllm-pascal/vllm /opt/venv/lib/python3.12/site-packages/vllm && \
-    rm -f /opt/venv/lib/python3.12/site-packages/vllm.egg-link
+# 注意: 必须保留 vllm-*.dist-info/，否则 importlib.metadata.version("vllm")
+# 会失败，导致 CUDA 平台检测被跳过 (vllm.platforms.__init__)
+RUN rm -rf /opt/venv/lib/python3.12/site-packages/vllm \
+           /opt/venv/lib/python3.12/site-packages/vllm.egg-link \
+           /opt/venv/lib/python3.12/site-packages/__editable__.*vllm* \
+    && cp -r /workspace/vllm-pascal/vllm /opt/venv/lib/python3.12/site-packages/vllm
 # 注意: 此处不验证 import vllm._C，因为 builder 阶段没有 NVIDIA 驱动（libcuda.so.1）
 # 运行时验证将在容器启动后由 NVIDIA 容器运行时提供
 
