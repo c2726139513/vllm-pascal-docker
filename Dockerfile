@@ -14,7 +14,7 @@ ENV PYTHONUNBUFFERED=1
 ARG MAX_JOBS=2
 ENV MAX_JOBS=${MAX_JOBS}
 
-ENV TORCH_CUDA_ARCH_LIST="6.0;6.1"
+ENV TORCH_CUDA_ARCH_LIST="6.0 6.1"
 ENV VLLM_TARGET_DEVICE="cuda"
 
 RUN apt-get update -y && \
@@ -38,29 +38,20 @@ WORKDIR /workspace
 RUN git clone --depth 1 https://github.com/uaysk/vllm-pascal.git
 WORKDIR /workspace/vllm-pascal
 
+# 安装构建依赖（镜像 pyproject.toml build-system.requires）
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "setuptools>=77.0.3,<81.0.0" wheel packaging cmake ninja \
         jinja2 regex protobuf setuptools-scm numpy grpcio-tools==1.78.0
 
-# PyTorch 2.10.0 只在 cu128/cu126/cu130 发布，没有 cu124/cu121 的 wheel
-# cu128 兼容 CUDA 12.4 runtime（CUDA 向下兼容）
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu128 \
-        torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0
+# 安装 PyTorch（先装 cu121 版占位，pip install -e 时会按 cuda.txt 自动升级到 torch==2.10.0+cu128）
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
+        torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
 
-# 使用可编辑模式构建（这是 uaysk/vllm-pascal 官方推荐的安装方式）
-# CMake 会将 _C.abi3.so 等扩展文件直接输出到源码目录 vllm/ 下
-# --no-deps: 防止 pip 解析运行时依赖时触碰已安装的 torch 版本
-RUN pip install -e . --no-build-isolation --no-deps
+# 使用可编辑模式构建（官方推荐方式），pip 根据 requirements/cuda.txt 自动升级 torch 到 2.10.0
+# CMake 编译发生时 torch 已是正确版本，.so ABI 与运行时一致
+RUN pip install -e . --no-build-isolation
 
-# 安装运行时依赖（cuda 需求的其余包），torch 已在上步装好，不再触碰
-RUN pip install --no-cache-dir \
-        --index-url https://download.pytorch.org/whl/cu128 \
-        --extra-index-url https://pypi.org/simple \
-        -r requirements/common.txt && \
-    grep -v '^-r common\|^torch\|^torchvision\|^torchaudio' requirements/cuda.txt > /tmp/cuda_other.txt && \
-    pip install --no-cache-dir -r /tmp/cuda_other.txt
-
-# 列出源码 vllm/ 目录中的 .so 文件（确认 CMake 产生了哪些）
+# 确认构建产物
 RUN python3 <<'PYEOF'
 import os, glob
 vllm_dir = '/workspace/vllm-pascal/vllm'
@@ -74,17 +65,17 @@ if not so_files:
     import sys; sys.exit(1)
 PYEOF
 
-# 将源码 vllm/ 目录（含 .so 文件）复制到 site-packages，转为普通安装
-# 注意: 必须保留 vllm-*.dist-info/，否则 importlib.metadata.version("vllm")
-# 会失败，导致 CUDA 平台检测被跳过 (vllm.platforms.__init__)
+# 将源码 vllm/ 目录（含 .so 文件）复制到 site-packages，替换掉 editable 链接
+# 注意: 只能用精确路径删除，不能用 vllm* 通配符（会误删 vllm-*.dist-info/）。
+#       .dist-info 是 importlib.metadata.version("vllm") 的查询来源，
+#       删掉会导致 vllm.platforms.__init__ 中 CUDA 平台检测失败 → "Failed to infer device type"
 RUN rm -rf /opt/venv/lib/python3.12/site-packages/vllm \
            /opt/venv/lib/python3.12/site-packages/vllm.egg-link \
            /opt/venv/lib/python3.12/site-packages/__editable__.*vllm* \
     && cp -r /workspace/vllm-pascal/vllm /opt/venv/lib/python3.12/site-packages/vllm
-# 注意: 此处不验证 import vllm._C，因为 builder 阶段没有 NVIDIA 驱动（libcuda.so.1）
-# 运行时验证将在容器启动后由 NVIDIA 容器运行时提供
+# 注意: 此处不验证 import vllm._C，因为 builder 无 GPU 驱动（libcuda.so.1 需要运行时提供）
 
-# 清理构建依赖和源码（src 已复制到 site-packages，不再需要）
+# 清理构建依赖和源码
 RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/* \
     /workspace/vllm-pascal
 
