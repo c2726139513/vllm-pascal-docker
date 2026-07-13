@@ -43,13 +43,12 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "setuptools>=77.0.3,<81.0.0" wheel packaging cmake ninja \
         jinja2 regex protobuf setuptools-scm numpy grpcio-tools==1.78.0
 
-# 安装 PyTorch（先装 cu121 版占位，pip install -e 会按 cuda.txt 自动升级到 torch==2.10.0+cu128）
-# 注意: 不用 --no-deps，让 pip 先装好 torch 2.10.0+cu128，再编译，确保 .so ABI 与运行一致
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
-        torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+# 安装 PyTorch 2.10.0（项目实际要求的版本，从 PyPI 获取 2.10.0+cu128）
+# 不再经过 cu121 占位再升级的中间步骤
+RUN pip install --no-cache-dir torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0
 
 # 使用可编辑模式构建（官方推荐方式）
-# pip 先解析依赖 → 安装 torch 2.10.0+cu128 → 再执行 CMake 编译，ABI 与运行时一致
+# pip 先解析依赖：cuda.txt 要求 torch==2.10.0（已装好，跳过）→ CMake 编译 .so
 RUN pip install -e . --no-build-isolation
 
 # 确认构建产物
