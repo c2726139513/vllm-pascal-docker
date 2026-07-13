@@ -50,16 +50,30 @@ WORKDIR /workspace/vllm-pascal
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf setuptools-scm numpy
 
-# 安装 CUDA 12.1 适配的 PyTorch 2.5.1（vLLM Pascal 分支与此版本兼容）
-# 注意: 用 cu121 wheel, cu124 wheel 缺少 torch::jit::parseSchemaOrName 等内部符号
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
-        torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+# 安装 CUDA 12.1 适配的 PyTorch（vLLM Pascal 分支 PyTorch 版本由 pyproject.toml 控制）
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 \
+        torch torchvision torchaudio
 
 # 从源码编译并安装 vLLM（非可编辑模式，所有产物进 site-packages）
-RUN pip install . --no-build-isolation
+# 设置 VERBOSE=1 以便在 CI 中查看 CMake 构建过程
+ENV VERBOSE=1
+RUN pip install . --no-build-isolation --verbose 2>&1
 
-# 验证 vLLM 编译产物可正确加载（提前暴露链接问题）
-RUN python3 -c "import vllm._C; print('vLLM _C module loaded OK')"
+# 诊断: 列出 vllm 包目录，确认 _C 扩展是否被安装
+RUN python3 -c "
+import vllm
+print('vLLM imported OK, version:', vllm.__version__)
+print('vLLM location:', vllm.__file__)
+import os, glob
+vllm_dir = os.path.dirname(vllm.__file__)
+print('vllm dir contents:')
+for f in sorted(os.listdir(vllm_dir)):
+    print(' ', f)
+print()
+print('*.so files:')
+for f in sorted(glob.glob(os.path.join(vllm_dir, '*.so*'))):
+    print(' ', os.path.basename(f))
+"
 
 # 清理构建中间产物
 RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/* \
