@@ -45,11 +45,13 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # 安装 PyTorch 2.10.0（项目实际要求的版本，从 PyPI 获取 2.10.0+cu128）
 # 不再经过 cu121 占位再升级的中间步骤
-RUN pip install --no-cache-dir torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0
+RUN pip install --no-cache-dir torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 && \
+    python3 -c "import torch; print('Pre-build torch:', torch.__version__)"
 
 # 使用可编辑模式构建（官方推荐方式）
 # pip 先解析依赖：cuda.txt 要求 torch==2.10.0（已装好，跳过）→ CMake 编译 .so
-RUN pip install -e . --no-build-isolation
+RUN pip install -e . --no-build-isolation && \
+    python3 -c "import torch; print('Post-build torch:', torch.__version__)"
 
 # 确认构建产物
 RUN python3 <<'PYEOF'
