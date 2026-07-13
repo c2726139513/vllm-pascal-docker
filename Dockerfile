@@ -19,10 +19,7 @@ ENV MAX_JOBS=${MAX_JOBS}
 ENV TORCH_CUDA_ARCH_LIST="6.0 6.1"
 ENV VLLM_TARGET_DEVICE="cuda"
 
-# 安装系统依赖:
-#   - Ubuntu 22.04 默认 Python 为 3.10，通过 deadsnakes PPA 安装 Python 3.12
-#   - gcc-12 兼容 CUDA 12.4 的要求
-#   - ccache 加速重复构建
+# 安装系统依赖
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         software-properties-common \
@@ -50,32 +47,35 @@ WORKDIR /workspace/vllm-pascal
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf setuptools-scm numpy
 
-# 安装 CUDA 12.1 适配的 PyTorch（vLLM Pascal 分支 PyTorch 版本由 pyproject.toml 控制）
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 \
-        torch torchvision torchaudio
+# 安装 PyTorch（uaysk/vllm-pascal 测试版本: 2.5.1+cu121，CUDA 12.1 兼容宿主机 12.4）
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
+        torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
 
-# 从源码编译并安装 vLLM（非可编辑模式，所有产物进 site-packages）
-# 设置 VERBOSE=1 以便在 CI 中查看 CMake 构建过程
-ENV VERBOSE=1
-RUN pip install . --no-build-isolation --verbose 2>&1
+# 以 wheel 方式构建 vLLM（bdist_wheel 确保 .so 扩展被打包进 wheel，
+# 避免 pip install . 的 PEP 517 temp copy 导致 cmake install 路径失效）
+RUN python3 setup.py bdist_wheel --dist-dir=/workspace/dist
 
-# 诊断: 列出 vllm 包目录，确认 _C 扩展是否被安装
+# 验证 wheel 中包含 _C 扩展
 RUN python3 -c "
-import vllm
-print('vLLM imported OK, version:', vllm.__version__)
-print('vLLM location:', vllm.__file__)
-import os, glob
-vllm_dir = os.path.dirname(vllm.__file__)
-print('vllm dir contents:')
-for f in sorted(os.listdir(vllm_dir)):
-    print(' ', f)
-print()
-print('*.so files:')
-for f in sorted(glob.glob(os.path.join(vllm_dir, '*.so*'))):
-    print(' ', os.path.basename(f))
+import zipfile, os
+wheels = [f for f in os.listdir('/workspace/dist') if f.endswith('.whl')]
+print('Built wheels:', wheels)
+with zipfile.ZipFile(os.path.join('/workspace/dist', wheels[0]), 'r') as z:
+    so_files = [f for f in z.namelist() if f.endswith('.so')]
+    print('SO files in wheel:')
+    for f in sorted(so_files):
+        print(' ', f)
+    py_files = [f for f in z.namelist() if f.endswith('.py')]
+    print(f'Total .py files: {len(py_files)}')
+    print(f'Total .so files: {len(so_files)}')
 "
 
-# 清理构建中间产物
+# 在构建阶段临时安装验证链接没问题
+RUN pip install /workspace/dist/vllm-*.whl --no-deps && \
+    python3 -c "import vllm._C; print('vLLM _C module loaded OK')" && \
+    pip uninstall -y vllm
+
+# 清理构建中间产物（保留 /workspace/dist 下的 wheel）
 RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/* \
     /workspace/vllm-pascal/.git \
     /workspace/vllm-pascal/build
@@ -88,7 +88,7 @@ FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# 安装 Python 3.12 运行时（仅 python3.12 本体 + venv，不要 -dev 头文件包）
+# 安装 Python 3.12 运行时
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         software-properties-common && \
@@ -98,16 +98,20 @@ RUN apt-get update -y && \
         python3.12 python3.12-venv && \
     rm -rf /var/lib/apt/lists/*
 
-# 从构建阶段复制虚拟环境（仅 site-packages，不含源码和构建缓存）
+# 从构建阶段复制虚拟环境和 wheel
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /workspace/dist /workspace/dist
 
-# torch/lib 必须加入 LD_LIBRARY_PATH，否则 vLLM 编译的 _C 扩展
-# 在运行时找不到 libtorch.so 中的符号（undefined symbol）
 ENV PATH="/opt/venv/bin:$PATH" \
     LD_LIBRARY_PATH="/opt/venv/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}"
+
+# 安装 vLLM wheel（包含编译好的 _C.abi3.so）
+RUN pip install /workspace/dist/vllm-*.whl --no-deps --no-cache-dir && \
+    rm -rf /workspace/dist
+
 WORKDIR /workspace
 
-# 健康检查（vLLM API 服务就绪探测）
+# 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
