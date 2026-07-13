@@ -56,7 +56,7 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu12
 RUN python3 setup.py bdist_wheel --dist-dir=/workspace/dist
 
 # 验证 wheel 中包含 _C 扩展
-RUN python3 -c "
+RUN python3 <<'PYEOF'
 import zipfile, os
 wheels = [f for f in os.listdir('/workspace/dist') if f.endswith('.whl')]
 print('Built wheels:', wheels)
@@ -68,9 +68,9 @@ with zipfile.ZipFile(os.path.join('/workspace/dist', wheels[0]), 'r') as z:
     py_files = [f for f in z.namelist() if f.endswith('.py')]
     print(f'Total .py files: {len(py_files)}')
     print(f'Total .so files: {len(so_files)}')
-"
+PYEOF
 
-# 在构建阶段临时安装验证链接没问题
+# 在构建阶段临时安装验证 _C 扩展可加载
 RUN pip install /workspace/dist/vllm-*.whl --no-deps && \
     python3 -c "import vllm._C; print('vLLM _C module loaded OK')" && \
     pip uninstall -y vllm
