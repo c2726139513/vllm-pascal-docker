@@ -43,13 +43,24 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "setuptools>=77.0.3,<81.0.0" wheel packaging cmake ninja \
         jinja2 regex protobuf setuptools-scm numpy grpcio-tools==1.78.0
 
-# 安装 PyTorch（先装 cu121 版占位，pip install -e 时会按 cuda.txt 自动升级到 torch==2.10.0+cu128）
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
-        torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+# 安装 PyTorch 2.10.0（项目锁定的版本），cu126 是离 cu121 最近的有 torch 2.10.0 的通道
+# cu126 兼容 CUDA 12.4 runtime（CUDA 向下兼容，torch 自带 CUDA 库）
+# 注意: 必须在 pip install -e . 之前装好，否则 setup.py 会在 pip 升级 torch 之前导入旧版 torch，
+#       导致 CMake 针对旧版 torch 编译 .so，运行时新版 torch 缺少旧版符号 → undefined symbol
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu126 \
+        torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0
 
-# 使用可编辑模式构建（官方推荐方式），pip 根据 requirements/cuda.txt 自动升级 torch 到 2.10.0
-# CMake 编译发生时 torch 已是正确版本，.so ABI 与运行时一致
-RUN pip install -e . --no-build-isolation
+# 使用可编辑模式构建（官方推荐方式）
+# --no-deps: 防止 pip 解析运行时依赖时触碰已装好的 torch 版本
+RUN pip install -e . --no-build-isolation --no-deps
+
+# 安装运行时依赖（torch 已装好，不再触碰）
+RUN pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cu126 \
+        --extra-index-url https://pypi.org/simple \
+        -r requirements/common.txt && \
+    grep -v '^-r common\|^torch\|^torchvision\|^torchaudio' requirements/cuda.txt > /tmp/cuda_other.txt && \
+    pip install --no-cache-dir -r /tmp/cuda_other.txt
 
 # 确认构建产物
 RUN python3 <<'PYEOF'
