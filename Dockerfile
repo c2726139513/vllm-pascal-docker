@@ -63,13 +63,11 @@ if not so_files:
 PYEOF
 
 # 将源码 vllm/ 目录（含 .so 文件）复制到 site-packages，转为普通安装
-# 同时删除 egg-link，避免运行时依赖构建目录
 RUN rm -rf /opt/venv/lib/python3.12/site-packages/vllm* && \
     cp -r /workspace/vllm-pascal/vllm /opt/venv/lib/python3.12/site-packages/vllm && \
     rm -f /opt/venv/lib/python3.12/site-packages/vllm.egg-link
-
-# 验证 _C 可正常加载
-RUN python3 -c "import vllm._C; print('vLLM _C module loaded OK')"
+# 注意: 此处不验证 import vllm._C，因为 builder 阶段没有 NVIDIA 驱动（libcuda.so.1）
+# 运行时验证将在容器启动后由 NVIDIA 容器运行时提供
 
 # 清理
 RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/* \
