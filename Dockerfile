@@ -14,7 +14,7 @@ ENV PYTHONUNBUFFERED=1
 ARG MAX_JOBS=2
 ENV MAX_JOBS=${MAX_JOBS}
 
-ENV TORCH_CUDA_ARCH_LIST="6.0 6.1"
+ENV TORCH_CUDA_ARCH_LIST="6.0;6.1"
 ENV VLLM_TARGET_DEVICE="cuda"
 
 RUN apt-get update -y && \
@@ -39,14 +39,26 @@ RUN git clone --depth 1 https://github.com/uaysk/vllm-pascal.git
 WORKDIR /workspace/vllm-pascal
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir "setuptools>=77,<81" wheel packaging cmake ninja jinja2 regex protobuf setuptools-scm numpy
+    pip install --no-cache-dir "setuptools>=77.0.3,<81.0.0" wheel packaging cmake ninja \
+        jinja2 regex protobuf setuptools-scm numpy grpcio-tools==1.78.0
 
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
-        torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+# PyTorch 2.10.0 只在 cu128/cu126/cu130 发布，没有 cu124/cu121 的 wheel
+# cu128 兼容 CUDA 12.4 runtime（CUDA 向下兼容）
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu128 \
+        torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0
 
 # 使用可编辑模式构建（这是 uaysk/vllm-pascal 官方推荐的安装方式）
 # CMake 会将 _C.abi3.so 等扩展文件直接输出到源码目录 vllm/ 下
-RUN pip install -e . --no-build-isolation
+# --no-deps: 防止 pip 解析运行时依赖时触碰已安装的 torch 版本
+RUN pip install -e . --no-build-isolation --no-deps
+
+# 安装运行时依赖（cuda 需求的其余包），torch 已在上步装好，不再触碰
+RUN pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cu128 \
+        --extra-index-url https://pypi.org/simple \
+        -r requirements/common.txt && \
+    grep -v '^-r common\|^torch\|^torchvision\|^torchaudio' requirements/cuda.txt > /tmp/cuda_other.txt && \
+    pip install --no-cache-dir -r /tmp/cuda_other.txt
 
 # 列出源码 vllm/ 目录中的 .so 文件（确认 CMake 产生了哪些）
 RUN python3 <<'PYEOF'
@@ -72,10 +84,9 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/vllm \
 # 注意: 此处不验证 import vllm._C，因为 builder 阶段没有 NVIDIA 驱动（libcuda.so.1）
 # 运行时验证将在容器启动后由 NVIDIA 容器运行时提供
 
-# 清理
+# 清理构建依赖和源码（src 已复制到 site-packages，不再需要）
 RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/* \
-    /workspace/vllm-pascal/.git \
-    /workspace/vllm-pascal/build
+    /workspace/vllm-pascal
 
 # ---------------------------------------------------------------------------
 # 阶段二: 运行阶段
