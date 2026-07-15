@@ -48,11 +48,16 @@ RUN pip install --no-cache-dir torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.
     --index-url https://download.pytorch.org/whl/cu121 && \
     python3 -c "import torch; print('Pre-build torch:', torch.__version__)"
 
-# 将 torch 版本精确锁定为 2.5.1，pip 不会再升级
-# 已预装 torch 2.5.1，编译和运行时用它保证 ABI 一致
+# 将 torch/torchaudio/torchvision 版本锁定到与预装一致的版本
+# 已预装 torch 2.5.1+cu121，编译和运行时用它保证 ABI 一致
 RUN find /workspace/vllm-pascal -type f \( -name '*.txt' -o -name '*.toml' \
     -o -name '*.cfg' -o -name 'setup.py' \) \
-    -exec sed -i 's/torch[=~>< ]*2\.10\.0/torch==2.5.1/g' {} + 2>/dev/null; true
+    -exec sed -i \
+      -e 's/torch==2\.10\.0/torch==2.5.1/g' \
+      -e 's/torch == 2\.10\.0/torch == 2.5.1/g' \
+      -e 's/torchaudio==2\.10\.0/torchaudio==2.5.1/g' \
+      -e 's/torchvision==0\.25\.0/torchvision==0.20.1/g' \
+      {} + 2>/dev/null; true
 
 RUN pip install -e . --no-build-isolation && \
     python3 -c "import torch; print('Post-build torch:', torch.__version__)"
