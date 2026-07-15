@@ -1,12 +1,14 @@
 # =============================================================================
 # 多阶段构建: vLLM for Pascal GPU (uaysk/vllm-pascal)
-# 目标运行时环境: CUDA 12.6 (匹配 torch 2.10.0+cu126)
+# 目标运行时环境: CUDA 12.4 (匹配 torch 2.6.0+cu124)
+# 说明: 宿主 NVIDIA 驱动为 CUDA 12.4，P104-100(Pascal/sm_61) 不支持 CUDA
+#       forward compatibility，故 torch CUDA runtime 必须 <= 12.4，不能用 cu126/cu128。
 # =============================================================================
 
 # ---------------------------------------------------------------------------
 # 阶段一: 构建阶段 — 编译 vLLM CUDA 内核
 # ---------------------------------------------------------------------------
-FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -43,24 +45,29 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "setuptools>=77.0.3,<81.0.0" wheel packaging cmake ninja \
         jinja2 regex protobuf setuptools-scm numpy grpcio-tools==1.78.0
 
-# 安装 PyTorch 2.10.0+cu126（CUDA 12.6 构建：保留 sm_61/Pascal 支持，且含 wrap_triton 等新 API，
-# 正好匹配 vLLM 期望的 torch==2.10.0。注意：cu128/cu129 构建已丢弃 Pascal，必须用 cu126。）
-RUN pip install --no-cache-dir torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
-    --index-url https://download.pytorch.org/whl/cu126 && \
+# 安装 PyTorch 2.6.0+cu124（CUDA 12.4 构建：保留 sm_61/Pascal 支持，且含 wrap_triton；
+# CUDA runtime 12.4 <= 宿主驱动 12.4，Pascal 无需 forward compatibility，避免 Error 804）。
+# torchvision/torchaudio 无 cu124 变体，使用 cu126 构建（与 torch 2.6.0 ABI 一致，复用 torch 的 CUDA runtime）。
+RUN pip install --no-cache-dir \
+    torch==2.6.0+cu124 \
+    torchvision==0.21.0+cu126 \
+    torchaudio==2.6.0+cu126 \
+    --extra-index-url https://download.pytorch.org/whl/cu124 \
+    --extra-index-url https://download.pytorch.org/whl/cu126 && \
     python3 -c "import torch; print('Pre-build torch:', torch.__version__)"
 
-# 将 torch/torchaudio/torchvision 版本锁定到与预装一致的 +cu126 变体
-# 已预装 torch 2.10.0+cu126（CUDA 12.6 构建，保留 sm_61/Pascal 支持），编译和运行时用它保证 ABI 一致
+# 将 torch/torchaudio/torchvision 版本锁定到与预装一致的变体
+# 已预装 torch 2.6.0+cu124（CUDA 12.4 构建，保留 sm_61/Pascal 支持），编译和运行时用它保证 ABI 一致
 RUN find /workspace/vllm-pascal -type f \( -name '*.txt' -o -name '*.toml' \
     -o -name '*.cfg' -o -name 'setup.py' \) \
     -exec sed -i \
-      -e 's/torch==2\.10\.0/torch==2.10.0+cu126/g' \
-      -e 's/torch == 2\.10\.0/torch == 2.10.0+cu126/g' \
-      -e 's/torchaudio==2\.10\.0/torchaudio==2.10.0+cu126/g' \
-      -e 's/torchvision==0\.25\.0/torchvision==0.25.0+cu126/g' \
+      -e 's/torch==2\.10\.0/torch==2.6.0+cu124/g' \
+      -e 's/torch == 2\.10\.0/torch == 2.6.0+cu124/g' \
+      -e 's/torchaudio==2\.10\.0/torchaudio==2.6.0+cu126/g' \
+      -e 's/torchvision==0\.25\.0/torchvision==0.21.0+cu126/g' \
       {} + 2>/dev/null; true
 
-RUN pip install -e . --no-build-isolation --extra-index-url https://download.pytorch.org/whl/cu126 && \
+RUN pip install -e . --no-build-isolation --extra-index-url https://download.pytorch.org/whl/cu124 --extra-index-url https://download.pytorch.org/whl/cu126 && \
     python3 -c "import torch; print('Post-build torch:', torch.__version__)"
 
 # 确认构建产物
@@ -94,7 +101,7 @@ RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/* \
 # ---------------------------------------------------------------------------
 # 阶段二: 运行阶段
 # ---------------------------------------------------------------------------
-FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
