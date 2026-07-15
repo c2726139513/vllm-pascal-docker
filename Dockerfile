@@ -43,13 +43,16 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "setuptools>=77.0.3,<81.0.0" wheel packaging cmake ninja \
         jinja2 regex protobuf setuptools-scm numpy grpcio-tools==1.78.0
 
-# 安装 PyTorch 2.10.0（项目实际要求的版本，从 PyPI 获取 2.10.0+cu128）
-# 不再经过 cu121 占位再升级的中间步骤
-RUN pip install --no-cache-dir torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 && \
+# 安装 PyTorch 2.5.1+cu121（支持 sm_61，上游 P40 已验证路径）
+RUN pip install --no-cache-dir torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 \
+    --index-url https://download.pytorch.org/whl/cu121 && \
     python3 -c "import torch; print('Pre-build torch:', torch.__version__)"
 
-# 使用可编辑模式构建（官方推荐方式）
-# pip 先解析依赖：cuda.txt 要求 torch==2.10.0（已装好，跳过）→ CMake 编译 .so
+# 上游 pyproject.toml build-system.requires 锁死 torch==2.10.0，
+# 需先放宽约束，否则 pip install 又把 torch 升回去
+RUN sed -i 's/"torch == 2.10.0"/"torch >= 2.5.1"/' /workspace/vllm-pascal/pyproject.toml
+
+# 使用可编辑模式构建
 RUN pip install -e . --no-build-isolation && \
     python3 -c "import torch; print('Post-build torch:', torch.__version__)"
 
