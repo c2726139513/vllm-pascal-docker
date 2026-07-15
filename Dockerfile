@@ -48,11 +48,11 @@ RUN pip install --no-cache-dir torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.
     --index-url https://download.pytorch.org/whl/cu121 && \
     python3 -c "import torch; print('Pre-build torch:', torch.__version__)"
 
-# 删除所有 torch 依赖行，pip 就没机会升级 torch
-# 已预装 torch 2.5.1，编译和运行时都用它，保证 ABI 一致
-RUN find /workspace/vllm-pascal -type f \( -name '*.txt' -o -name '*.toml' \
-    -o -name '*.cfg' -o -name 'setup.py' \) \
-    -exec sed -i '/[Tt]orch/d' {} + 2>/dev/null; true
+# 从 requirements 文件、pyproject.toml 中删除 torch 依赖行，
+# 阻止 pip install 时升级 torch。已预装 torch 2.5.1 供编译+运行时使用。
+# 注意：不碰 setup.py，避免误删代码逻辑。
+RUN find /workspace/vllm-pascal \( -name '*.txt' -o -name '*.toml' -o -name '*.cfg' \) \
+    -exec sed -i '/^torch[=~>]/d; /^[[:space:]]*"torch[=~>]/d; /torch ==/d' {} + 2>/dev/null; true
 
 # 使用预装的 torch 2.5.1 编译和安装
 RUN pip install -e . --no-build-isolation && \
