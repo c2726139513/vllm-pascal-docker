@@ -48,12 +48,16 @@ RUN pip install --no-cache-dir torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.
     --index-url https://download.pytorch.org/whl/cu121 && \
     python3 -c "import torch; print('Pre-build torch:', torch.__version__)"
 
-# 上游 pyproject.toml build-system.requires 锁死 torch==2.10.0，
-# 需先放宽约束，否则 pip install 又把 torch 升回去
-RUN sed -i 's/"torch == 2.10.0"/"torch >= 2.5.1"/' /workspace/vllm-pascal/pyproject.toml
+# 上游多处锁死 torch==2.10.0，扫掉所有引用避免 pip install 时被升级
+RUN find /workspace/vllm-pascal -name '*.toml' -o -name '*.txt' -o -name '*.cfg' | \
+    xargs sed -i 's/torch == 2\.10\.0/torch >= 2.5.1/g' 2>/dev/null; \
+    sed -i 's/"torch==2.10.0"/"torch>=2.5.1"/g' /workspace/vllm-pascal/setup.py 2>/dev/null; \
+    true
 
-# 使用可编辑模式构建
+# 使用可编辑模式构建，构建完强制装回正确的 torch 版本
 RUN pip install -e . --no-build-isolation && \
+    pip install --force-reinstall torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 \
+      --index-url https://download.pytorch.org/whl/cu121 && \
     python3 -c "import torch; print('Post-build torch:', torch.__version__)"
 
 # 确认构建产物
