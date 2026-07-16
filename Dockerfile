@@ -117,6 +117,36 @@ RUN apt-get update -y && \
 
 COPY --from=builder /opt/venv /opt/venv
 
+# Patch torch.jlibrary.register_fake: torchvision._meta_registrations uses
+# @torch.library.register_fake("torchvision::nms") which fails because the nms operator
+# may not be registered at import time (CUDA-only op, not in _C.so for this build).
+# All other torchvision ops use @register_meta which has an _has_ops() guard.
+# For --enforce-eager text-only inference, fake operators are never used, so safe to skip.
+RUN /opt/venv/bin/python3 -c "
+sitecustomize = '''\
+import torch.library
+import functools
+
+_orig_register_fake = torch.library.register_fake
+
+@functools.wraps(_orig_register_fake)
+def _safe_register_fake(qualname, *args, **kwargs):
+    try:
+        return _orig_register_fake(qualname, *args, **kwargs)
+    except RuntimeError as e:
+        if \"does not exist\" in str(e):
+            def noop(f):
+                return f
+            return noop
+        raise
+
+torch.library.register_fake = _safe_register_fake
+'''
+with open('/opt/venv/lib/python3.12/site-packages/sitecustomize.py', 'w') as f:
+    f.write(sitecustomize)
+print('sitecustomize.py written')
+"
+
 ENV PATH="/opt/venv/bin:$PATH" \
     LD_LIBRARY_PATH="/opt/venv/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}"
 
