@@ -1,14 +1,13 @@
 # =============================================================================
 # 多阶段构建: vLLM for Pascal GPU (uaysk/vllm-pascal)
-# 目标运行时环境: CUDA 12.4 (匹配 torch 2.6.0+cu124)
-# 说明: 宿主 NVIDIA 驱动为 CUDA 12.4，P104-100(Pascal/sm_61) 不支持 CUDA
-#       forward compatibility，故 torch CUDA runtime 必须 <= 12.4，不能用 cu126/cu128。
+# 目标运行时环境: CUDA 12.6 (匹配 torch 2.10.0+cu126)
+# 宿主驱动: NVIDIA 580+ / CUDA 12.9 (>= CUDA 12.6, 无需 forward compat)
 # =============================================================================
 
 # ---------------------------------------------------------------------------
 # 阶段一: 构建阶段 — 编译 vLLM CUDA 内核
 # ---------------------------------------------------------------------------
-FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -45,29 +44,24 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "setuptools>=77.0.3,<81.0.0" wheel packaging cmake ninja \
         jinja2 regex protobuf setuptools-scm numpy grpcio-tools==1.78.0
 
-# 安装 PyTorch 2.6.0+cu124（CUDA 12.4 构建：保留 sm_61/Pascal 支持，且含 wrap_triton；
-# CUDA runtime 12.4 <= 宿主驱动 12.4，Pascal 无需 forward compatibility，避免 Error 804）。
-# torchvision/torchaudio 无 cu124 变体，使用 cu126 构建（与 torch 2.6.0 ABI 一致，复用 torch 的 CUDA runtime）。
-RUN pip install --no-cache-dir \
-    torch==2.6.0+cu124 \
-    torchvision==0.21.0+cu126 \
-    torchaudio==2.6.0+cu126 \
-    --extra-index-url https://download.pytorch.org/whl/cu124 \
-    --extra-index-url https://download.pytorch.org/whl/cu126 && \
+# 安装 PyTorch 2.10.0+cu126（CUDA 12.6 构建：保留 sm_61/Pascal 支持，且含 wrap_triton 等新 API，
+# 正好匹配 vLLM 期望的 torch==2.10.0。注意：cu128/cu129 构建已丢弃 Pascal，必须用 cu126。）
+RUN pip install --no-cache-dir torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
+    --index-url https://download.pytorch.org/whl/cu126 && \
     python3 -c "import torch; print('Pre-build torch:', torch.__version__)"
 
-# 将 torch/torchaudio/torchvision 版本锁定到与预装一致的变体
-# 已预装 torch 2.6.0+cu124（CUDA 12.4 构建，保留 sm_61/Pascal 支持），编译和运行时用它保证 ABI 一致
+# 将 torch/torchaudio/torchvision 版本锁定到与预装一致的 +cu126 变体
+# 已预装 torch 2.10.0+cu126（CUDA 12.6 构建，保留 sm_61/Pascal 支持），编译和运行时用它保证 ABI 一致
 RUN find /workspace/vllm-pascal -type f \( -name '*.txt' -o -name '*.toml' \
     -o -name '*.cfg' -o -name 'setup.py' \) \
     -exec sed -i \
-      -e 's/torch==2\.10\.0/torch==2.6.0+cu124/g' \
-      -e 's/torch == 2\.10\.0/torch == 2.6.0+cu124/g' \
-      -e 's/torchaudio==2\.10\.0/torchaudio==2.6.0+cu126/g' \
-      -e 's/torchvision==0\.25\.0/torchvision==0.21.0+cu126/g' \
+      -e 's/torch==2\.10\.0/torch==2.10.0+cu126/g' \
+      -e 's/torch == 2\.10\.0/torch == 2.10.0+cu126/g' \
+      -e 's/torchaudio==2\.10\.0/torchaudio==2.10.0+cu126/g' \
+      -e 's/torchvision==0\.25\.0/torchvision==0.25.0+cu126/g' \
       {} + 2>/dev/null; true
 
-RUN pip install -e . --no-build-isolation --extra-index-url https://download.pytorch.org/whl/cu124 --extra-index-url https://download.pytorch.org/whl/cu126 && \
+RUN pip install -e . --no-build-isolation --extra-index-url https://download.pytorch.org/whl/cu126 && \
     python3 -c "import torch; print('Post-build torch:', torch.__version__)"
 
 # 确认构建产物
@@ -101,7 +95,7 @@ RUN rm -rf /root/.cache/pip /root/.cache/ccache /tmp/* \
 # ---------------------------------------------------------------------------
 # 阶段二: 运行阶段
 # ---------------------------------------------------------------------------
-FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -116,36 +110,6 @@ RUN apt-get update -y && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
-
-# Patch torch.jlibrary.register_fake: torchvision._meta_registrations uses
-# @torch.library.register_fake("torchvision::nms") which fails because the nms operator
-# may not be registered at import time (CUDA-only op, not in _C.so for this build).
-# All other torchvision ops use @register_meta which has an _has_ops() guard.
-# For --enforce-eager text-only inference, fake operators are never used, so safe to skip.
-RUN /opt/venv/bin/python3 -c "
-sitecustomize = '''\
-import torch.library
-import functools
-
-_orig_register_fake = torch.library.register_fake
-
-@functools.wraps(_orig_register_fake)
-def _safe_register_fake(qualname, *args, **kwargs):
-    try:
-        return _orig_register_fake(qualname, *args, **kwargs)
-    except RuntimeError as e:
-        if \"does not exist\" in str(e):
-            def noop(f):
-                return f
-            return noop
-        raise
-
-torch.library.register_fake = _safe_register_fake
-'''
-with open('/opt/venv/lib/python3.12/site-packages/sitecustomize.py', 'w') as f:
-    f.write(sitecustomize)
-print('sitecustomize.py written')
-"
 
 ENV PATH="/opt/venv/bin:$PATH" \
     LD_LIBRARY_PATH="/opt/venv/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}"
